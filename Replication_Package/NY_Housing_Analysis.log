@@ -1,0 +1,620 @@
+--------------------------------------------------------------------------------------------------------------
+      name:  <unnamed>
+       log:  /Users/cristinasulam/Desktop/Replication_Package/NY_Housing_Analysis.log
+  log type:  text
+ opened on:   5 Dec 2024, 21:47:53
+
+. 
+. 
+. * Step 1: Load the public school dataset and perform the aggregation by ZIP code
+. use "public_school_ny.dta", clear
+
+. 
+. * Define school categories
+. gen elementary_school = SCHOOL_LEVEL == "Elementary"
+
+. gen middle_school = SCHOOL_LEVEL == "Middle"
+
+. gen high_school = SCHOOL_LEVEL == "High"
+
+. gen other_school = inlist(SCHOOL_LEVEL, "Other", "Prekindergarten", "Secondary", "Ungraded", "Not reported")
+
+. 
+. * Aggregate by ZIP code
+. collapse (sum) elementary_schools=elementary_school ///
+>          (sum) middle_schools=middle_school ///
+>          (sum) high_schools=high_school ///
+>          (sum) other_schools=other_school ///
+>          (mean) avg_student_teacher_ratio=STUTERATIO ///
+>          (sum) total_free_lunch=TOTFRL, by(LZIP)
+
+. 
+. * Calculate total schools and rename ZIP code
+. gen total_schools = elementary_schools + middle_schools + high_schools + other_schools
+
+. rename LZIP zip_code
+
+. save "Public_School_Aggregated.dta", replace
+(file Public_School_Aggregated.dta not found)
+file Public_School_Aggregated.dta saved
+
+. 
+. * Step 2: Merge with the housing data
+. use "NY_Housing.dta", clear
+
+. merge m:1 zip_code using "Public_School_Aggregated.dta"
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                           185
+        from master                       163  (_merge==1)
+        from using                         22  (_merge==2)
+
+    Matched                            93,098  (_merge==3)
+    -----------------------------------------
+
+. 
+. * Keep only matched observations
+. drop if _merge != 3
+(185 observations deleted)
+
+. drop _merge
+
+. 
+. * Save the merged dataset
+. save "Housing_Schools_Merged.dta", replace
+(file Housing_Schools_Merged.dta not found)
+file Housing_Schools_Merged.dta saved
+
+. 
+. * Step 3: Load the income dataset
+. use "Income.dta", clear
+
+. duplicates drop zip_code, force
+
+Duplicates in terms of zip_code
+
+(0 observations are duplicates)
+
+. save "Income.dta", replace
+file Income.dta saved
+
+. 
+. * Reload the housing dataset
+. use "Housing_Schools_Merged.dta", clear
+
+. merge m:1 zip_code using "Income.dta"
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                            19
+        from master                         0  (_merge==1)
+        from using                         19  (_merge==2)
+
+    Matched                            93,098  (_merge==3)
+    -----------------------------------------
+
+. 
+. * Check merge results
+. drop if _merge != 3
+(19 observations deleted)
+
+. drop _merge
+
+. 
+. * Save the final merged dataset
+. save "Final_Merged_Data.dta", replace
+(file Final_Merged_Data.dta not found)
+file Final_Merged_Data.dta saved
+
+. 
+. * Step 4: Load the final merged dataset
+. use "Final_Merged_Data.dta", clear
+
+. 
+. * Step 5: Clean and Filter the Dataset
+. keep price bed bath acre_lot house_size zip_code total_free_lunch total_schools costofliving medianincome av
+> g_student_teacher_ratio
+
+. drop if price < 60000 | price > 20000000
+(4,746 observations deleted)
+
+. drop if bed > 15
+(10,541 observations deleted)
+
+. drop if bath > 12
+(264 observations deleted)
+
+. drop if house_size > 10000 | house_size < 100
+(17,377 observations deleted)
+
+. drop if acre_lot > 60
+(16,025 observations deleted)
+
+. drop if avg_student_teacher_ratio > 20
+(256 observations deleted)
+
+. drop if total_schools > 35
+(76 observations deleted)
+
+. drop if missing(acre_lot)
+(0 observations deleted)
+
+. drop if missing(price) | missing(bed) | missing(bath) | missing(house_size) | missing(total_free_lunch) | mi
+> ssing(avg_student_teacher_ratio)
+(0 observations deleted)
+
+. 
+. * Step 6: Prepare Variables for Analysis
+. 
+. * Drop unused variables, and log-transform key variables
+. gen log_price = log(price)
+
+. gen log_house_size = log(house_size)
+
+. gen log_acre_lot = log(acre_lot)
+(11 missing values generated)
+
+. drop if missing(costofliving) | missing(medianincome) | missing(log_acre_lot)
+(11 observations deleted)
+
+. gen log_total_free_lunch = log(total_free_lunch)
+(408 missing values generated)
+
+. drop if missing(log_total_free_lunch)
+(408 observations deleted)
+
+. 
+. * Step 7: Convert String Variables to Numeric
+. 
+. * Convert costofliving from string to numeric
+. generate costofliving_num = real(subinstr(subinstr(costofliving, "$", "", .), ",", "", .))
+
+. drop costofliving
+
+. rename costofliving_num costofliving
+
+. format costofliving %12.2f
+
+. 
+. * Convert medianincome from string to numeric
+. generate medianincome_num = real(subinstr(subinstr(medianincome, "$", "", .), ",", "", .))
+
+. drop medianincome
+
+. rename medianincome_num medianincome
+
+. format medianincome %12.2f
+
+. 
+. * Step 8: Standardize Variables
+. 
+. * Standardize house_size
+. capture drop std_house_size
+
+. summarize house_size, detail
+
+                         house_size
+-------------------------------------------------------------
+      Percentiles      Smallest
+ 1%          660            122
+ 5%          910            200
+10%         1049            248       Obs              43,394
+25%         1318            288       Sum of wgt.      43,394
+
+50%         1743                      Mean           2025.354
+                        Largest       Std. dev.      1120.874
+75%         2392          10000
+90%         3266          10000       Variance        1256358
+95%         4078          10000       Skewness       2.421599
+99%         6610          10000       Kurtosis        11.9412
+
+. local house_size_mean = r(mean)
+
+. local house_size_sd = r(sd)
+
+. gen std_house_size = (house_size - `house_size_mean') / `house_size_sd'
+
+. 
+. * Standardize avg_student_teacher_ratio
+. capture drop std_avg_student_teacher_ratio
+
+. summarize avg_student_teacher_ratio, detail
+
+                      (mean) STUTERATIO
+-------------------------------------------------------------
+      Percentiles      Smallest
+ 1%          7.1           3.29
+ 5%        8.764           3.29
+10%         9.44           3.29       Obs              43,394
+25%       10.655           3.29       Sum of wgt.      43,394
+
+50%        11.78                      Mean           11.78104
+                        Largest       Std. dev.      1.947855
+75%        12.82       19.63167
+90%     14.03688       19.63167       Variance       3.794137
+95%     15.14727       19.63167       Skewness       .2006401
+99%       17.138       19.63167       Kurtosis       4.750918
+
+. local avg_student_teacher_ratio_mean = r(mean)
+
+. local avg_student_teacher_ratio_sd = r(sd)
+
+. gen std_avg_student_teacher_ratio = (avg_student_teacher_ratio - `avg_student_teacher_ratio_mean') / `avg_st
+> udent_teacher_ratio_sd'
+
+. 
+. * Standardize acre_lot
+. capture drop std_acre_lot
+
+. summarize acre_lot, detail
+
+                          acre_lot
+-------------------------------------------------------------
+      Percentiles      Smallest
+ 1%          .02            .01
+ 5%          .04            .01
+10%          .05            .01       Obs              43,394
+25%           .1            .01       Sum of wgt.      43,394
+
+50%          .22                      Mean           1.168909
+                        Largest       Std. dev.      4.104066
+75%          .55             60
+90%            2             60       Variance       16.84336
+95%            5             60       Skewness       7.827362
+99%         21.2             60       Kurtosis       77.61011
+
+. local acre_lot_mean = r(mean)
+
+. local acre_lot_sd = r(sd)
+
+. gen std_acre_lot = (acre_lot - `acre_lot_mean') / `acre_lot_sd'
+
+. 
+. * Standardize medianincome
+. capture drop std_medianincome
+
+. summarize medianincome, detail
+
+                        medianincome
+-------------------------------------------------------------
+      Percentiles      Smallest
+ 1%     48566.82       48566.82
+ 5%     64186.89       48566.82
+10%     70138.38       48566.82       Obs              43,394
+25%     73478.65       48566.82       Sum of wgt.      43,394
+
+50%     82107.06                      Mean           89360.55
+                        Largest       Std. dev.       20723.9
+75%     103213.5       139281.8
+90%     121846.3       139281.8       Variance       4.29e+08
+95%     128014.4       139281.8       Skewness       .8170454
+99%     139281.8       139281.8       Kurtosis       2.922885
+
+. local medianincome_mean = r(mean)
+
+. local medianincome_sd = r(sd)
+
+. gen std_medianincome = (medianincome - `medianincome_mean') / `medianincome_sd'
+
+. 
+. * Standardize costofliving
+. capture drop std_costofliving
+
+. summarize costofliving, detail
+
+                        costofliving
+-------------------------------------------------------------
+      Percentiles      Smallest
+ 1%     67817.68       67463.92
+ 5%     71480.37       67463.92
+10%     75736.76       67463.92       Obs              43,394
+25%     80310.56       67463.92       Sum of wgt.      43,394
+
+50%      89607.8                      Mean           96834.18
+                        Largest       Std. dev.      19841.24
+75%     118032.6       137874.7
+90%     125617.5       137874.7       Variance       3.94e+08
+95%     126531.7       137874.7       Skewness       .4142546
+99%     137874.7       137874.7       Kurtosis       1.684877
+
+. local costofliving_mean = r(mean)
+
+. local costofliving_sd = r(sd)
+
+. gen std_costofliving = (costofliving - `costofliving_mean') / `costofliving_sd'
+
+. 
+. * Step 9: Save the cleaned dataset
+. save "Final_Merged_Data_Cleaned.dta", replace
+(file Final_Merged_Data_Cleaned.dta not found)
+file Final_Merged_Data_Cleaned.dta saved
+
+. 
+. * Step 10: Summary Statistics
+. summarize price bed bath acre_lot house_size total_free_lunch total_schools costofliving medianincome avg_st
+> udent_teacher_ratio
+
+    Variable |        Obs        Mean    Std. dev.       Min        Max
+-------------+---------------------------------------------------------
+       price |     43,394    615186.1     1082536      60000   2.00e+07
+         bed |     43,394    3.599092    1.424834          1         15
+        bath |     43,394    2.430405    1.248882          1         12
+    acre_lot |     43,394    1.168909    4.104066        .01         60
+  house_size |     43,394    2025.354    1120.874        122      10000
+-------------+---------------------------------------------------------
+total_free~h |     43,394    1780.409    2024.241          3      11548
+total_scho~s |     43,394    6.203208    4.628329          1         34
+costofliving |     43,394    96834.18    19841.24   67463.92   137874.7
+medianincome |     43,394    89360.55     20723.9   48566.82   139281.8
+avg_studen~o |     43,394    11.78104    1.947855       3.29   19.63167
+
+. 
+. * Step 11: Figures
+. 
+. * Figure 1: Distribution of Log-Transformed Housing Prices
+. histogram log_price, normal 
+(bin=46, start=11.0021, width=.12628572)
+
+. graph export "figure1.png", as(png) replace
+file /Users/cristinasulam/Desktop/Replication_Package/figure1.png saved as PNG format
+
+. 
+. * Figure 2: Residuals for Model 1
+. regress log_price bed
+
+      Source |       SS           df       MS      Number of obs   =    43,394
+-------------+----------------------------------   F(1, 43392)     =   5046.52
+       Model |  4003.23221         1  4003.23221   Prob > F        =    0.0000
+    Residual |  34421.3776    43,392  .793265523   R-squared       =    0.1042
+-------------+----------------------------------   Adj R-squared   =    0.1042
+       Total |  38424.6098    43,393  .885502496   Root MSE        =    .89065
+
+------------------------------------------------------------------------------
+   log_price | Coefficient  Std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+         bed |   .2131725   .0030008    71.04   0.000     .2072909    .2190541
+       _cons |   12.02206   .0116156  1034.99   0.000      11.9993    12.04483
+------------------------------------------------------------------------------
+
+. predict residuals1, resid
+
+. histogram residuals1, normal 
+(bin=46, start=-3.5036025, width=.16715444)
+
+. graph export "figure2.png", as(png) replace
+file /Users/cristinasulam/Desktop/Replication_Package/figure2.png saved as PNG format
+
+. 
+. * Figure 3: Residuals for Model 7
+. regress log_price bed bath c.log_house_size##c.log_acre_lot total_schools std_avg_student_teacher_ratio log_
+> total_free_lunch std_medianincome std_costofliving zip_code
+
+      Source |       SS           df       MS      Number of obs   =    43,394
+-------------+----------------------------------   F(11, 43382)    =  15053.41
+       Model |  30447.6752        11  2767.97047   Prob > F        =    0.0000
+    Residual |   7976.9346    43,382  .183876598   R-squared       =    0.7924
+-------------+----------------------------------   Adj R-squared   =    0.7923
+       Total |  38424.6098    43,393  .885502496   Root MSE        =    .42881
+
+-------------------------------------------------------------------------------------------------
+                      log_price | Coefficient  Std. err.      t    P>|t|     [95% conf. interval]
+--------------------------------+----------------------------------------------------------------
+                            bed |  -.0600949   .0020609   -29.16   0.000    -.0641342   -.0560555
+                           bath |   .2081689   .0026477    78.62   0.000     .2029795    .2133584
+                 log_house_size |   .5045175   .0080279    62.85   0.000     .4887828    .5202523
+                   log_acre_lot |  -.1723146   .0210304    -8.19   0.000    -.2135345   -.1310948
+                                |
+c.log_house_size#c.log_acre_lot |   .0319939   .0027944    11.45   0.000     .0265168     .037471
+                                |
+                  total_schools |   .0212167   .0006684    31.74   0.000     .0199065    .0225269
+  std_avg_student_teacher_ratio |  -.0228519   .0022548   -10.13   0.000    -.0272714   -.0184325
+           log_total_free_lunch |  -.0716402    .002816   -25.44   0.000    -.0771596   -.0661209
+               std_medianincome |  -.2338496   .0032606   -71.72   0.000    -.2402404   -.2274589
+               std_costofliving |   .7160851   .0048301   148.25   0.000      .706618    .7255523
+                       zip_code |  -.0000602   2.72e-06   -22.12   0.000    -.0000655   -.0000549
+                          _cons |   9.921212   .0677054   146.54   0.000     9.788508    10.05392
+-------------------------------------------------------------------------------------------------
+
+. predict residuals7, resid
+
+. histogram residuals7, normal
+(bin=46, start=-2.1697483, width=.12069116)
+
+. graph export "figure3.png", as(png) replace
+file /Users/cristinasulam/Desktop/Replication_Package/figure3.png saved as PNG format
+
+. 
+. * Step 12: Run Regression Models
+. 
+. * Model 1: Baseline Model - Bedrooms
+. regress log_price bed
+
+      Source |       SS           df       MS      Number of obs   =    43,394
+-------------+----------------------------------   F(1, 43392)     =   5046.52
+       Model |  4003.23221         1  4003.23221   Prob > F        =    0.0000
+    Residual |  34421.3776    43,392  .793265523   R-squared       =    0.1042
+-------------+----------------------------------   Adj R-squared   =    0.1042
+       Total |  38424.6098    43,393  .885502496   Root MSE        =    .89065
+
+------------------------------------------------------------------------------
+   log_price | Coefficient  Std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+         bed |   .2131725   .0030008    71.04   0.000     .2072909    .2190541
+       _cons |   12.02206   .0116156  1034.99   0.000      11.9993    12.04483
+------------------------------------------------------------------------------
+
+. est store model1
+
+. 
+. * Model 2: Add Housing Characteristics
+. regress log_price bed bath std_house_size  std_acre_lot
+
+      Source |       SS           df       MS      Number of obs   =    43,394
+-------------+----------------------------------   F(4, 43389)     =   6805.56
+       Model |   14813.562         4  3703.39051   Prob > F        =    0.0000
+    Residual |  23611.0478    43,389  .544171282   R-squared       =    0.3855
+-------------+----------------------------------   Adj R-squared   =    0.3855
+       Total |  38424.6098    43,393  .885502496   Root MSE        =    .73768
+
+--------------------------------------------------------------------------------
+     log_price | Coefficient  Std. err.      t    P>|t|     [95% conf. interval]
+---------------+----------------------------------------------------------------
+           bed |  -.0724627   .0032754   -22.12   0.000    -.0788826   -.0660428
+          bath |   .4152011   .0045555    91.14   0.000     .4062723    .4241299
+std_house_size |   .1540911   .0057926    26.60   0.000     .1427374    .1654447
+  std_acre_lot |   .0001425   .0035762     0.04   0.968    -.0068669    .0071519
+         _cons |   12.04098   .0143673   838.08   0.000     12.01282    12.06914
+--------------------------------------------------------------------------------
+
+. est store model2
+
+. 
+. * Model 3: Replace with Log-Transformed House Size and Lot Size (r-squared improves)
+. regress log_price bed bath log_house_size  log_acre_lot
+
+      Source |       SS           df       MS      Number of obs   =    43,394
+-------------+----------------------------------   F(4, 43389)     =   7027.44
+       Model |  15106.6455         4  3776.66137   Prob > F        =    0.0000
+    Residual |  23317.9643    43,389  .537416495   R-squared       =    0.3932
+-------------+----------------------------------   Adj R-squared   =    0.3931
+       Total |  38424.6098    43,393  .885502496   Root MSE        =    .73309
+
+--------------------------------------------------------------------------------
+     log_price | Coefficient  Std. err.      t    P>|t|     [95% conf. interval]
+---------------+----------------------------------------------------------------
+           bed |  -.0961813   .0034181   -28.14   0.000    -.1028808   -.0894818
+          bath |   .4253871   .0042975    98.98   0.000     .4169639    .4338103
+log_house_size |   .3938841    .012598    31.27   0.000     .3691919    .4185763
+  log_acre_lot |  -.0627648   .0025535   -24.58   0.000    -.0677697   -.0577599
+         _cons |   9.066216   .0850182   106.64   0.000     8.899579    9.232853
+--------------------------------------------------------------------------------
+
+. est store model3
+
+. 
+. * Model 4: Add Total Schools
+. regress log_price bed bath log_house_size  log_acre_lot total_schools
+
+      Source |       SS           df       MS      Number of obs   =    43,394
+-------------+----------------------------------   F(5, 43388)     =   6798.05
+       Model |  16878.9286         5  3375.78572   Prob > F        =    0.0000
+    Residual |  21545.6812    43,388  .496581571   R-squared       =    0.4393
+-------------+----------------------------------   Adj R-squared   =    0.4392
+       Total |  38424.6098    43,393  .885502496   Root MSE        =    .70469
+
+--------------------------------------------------------------------------------
+     log_price | Coefficient  Std. err.      t    P>|t|     [95% conf. interval]
+---------------+----------------------------------------------------------------
+           bed |  -.1106207   .0032945   -33.58   0.000    -.1170781   -.1041634
+          bath |    .406471   .0041431    98.11   0.000     .3983504    .4145917
+log_house_size |   .4386715   .0121331    36.16   0.000     .4148904    .4624525
+  log_acre_lot |  -.0180347   .0025662    -7.03   0.000    -.0230646   -.0130048
+ total_schools |   .0463458   .0007758    59.74   0.000     .0448252    .0478663
+         _cons |   8.599237   .0820974   104.74   0.000     8.438324    8.760149
+--------------------------------------------------------------------------------
+
+. est store model4
+
+. 
+. * Model 5: Add Student-Teacher Ratio and Free Lunch
+. regress log_price bed bath log_house_size  log_acre_lot total_schools std_avg_student_teacher_ratio log_tota
+> l_free_lunch
+
+      Source |       SS           df       MS      Number of obs   =    43,394
+-------------+----------------------------------   F(7, 43386)     =   4909.95
+       Model |  16984.4887         7  2426.35553   Prob > F        =    0.0000
+    Residual |  21440.1211    43,386  .494171416   R-squared       =    0.4420
+-------------+----------------------------------   Adj R-squared   =    0.4419
+       Total |  38424.6098    43,393  .885502496   Root MSE        =    .70297
+
+-----------------------------------------------------------------------------------------------
+                    log_price | Coefficient  Std. err.      t    P>|t|     [95% conf. interval]
+------------------------------+----------------------------------------------------------------
+                          bed |   -.106496   .0032991   -32.28   0.000    -.1129623   -.1000297
+                         bath |    .404141   .0041364    97.70   0.000     .3960336    .4122483
+               log_house_size |   .4260416   .0121347    35.11   0.000     .4022574    .4498258
+                 log_acre_lot |  -.0279409   .0027021   -10.34   0.000    -.0332371   -.0226448
+                total_schools |   .0568149   .0010692    53.14   0.000     .0547193    .0589105
+std_avg_student_teacher_ratio |   .0237714    .003674     6.47   0.000     .0165704    .0309725
+         log_total_free_lunch |  -.0658354    .004543   -14.49   0.000    -.0747398    -.056931
+                        _cons |   9.059431   .0877872   103.20   0.000     8.887366    9.231495
+-----------------------------------------------------------------------------------------------
+
+. est store model5
+
+. 
+. * Model 6: Add Median Income
+. regress log_price bed bath log_house_size  log_acre_lot total_schools std_avg_student_teacher_ratio log_tota
+> l_free_lunch std_medianincome 
+
+      Source |       SS           df       MS      Number of obs   =    43,394
+-------------+----------------------------------   F(8, 43385)     =   6254.15
+       Model |  20579.5659         8  2572.44574   Prob > F        =    0.0000
+    Residual |  17845.0438    43,385  .411318286   R-squared       =    0.5356
+-------------+----------------------------------   Adj R-squared   =    0.5355
+       Total |  38424.6098    43,393  .885502496   Root MSE        =    .64134
+
+-----------------------------------------------------------------------------------------------
+                    log_price | Coefficient  Std. err.      t    P>|t|     [95% conf. interval]
+------------------------------+----------------------------------------------------------------
+                          bed |  -.0673801   .0030388   -22.17   0.000    -.0733362    -.061424
+                         bath |   .3551984   .0038099    93.23   0.000     .3477311    .3626658
+               log_house_size |   .3489188   .0111015    31.43   0.000     .3271597     .370678
+                 log_acre_lot |  -.0048671   .0024775    -1.96   0.049    -.0097231   -.0000111
+                total_schools |   .0524078   .0009766    53.67   0.000     .0504937    .0543219
+std_avg_student_teacher_ratio |    .001759   .0033601     0.52   0.601    -.0048269    .0083449
+         log_total_free_lunch |  -.0116628    .004185    -2.79   0.005    -.0198655     -.00346
+             std_medianincome |   .2997138   .0032058    93.49   0.000     .2934303    .3059973
+                        _cons |   9.300965   .0801322   116.07   0.000     9.143904    9.458026
+-----------------------------------------------------------------------------------------------
+
+. est store model6
+
+. 
+. * Model 7: Add Cost of Living and Interaction
+. regress log_price bed bath c.log_house_size##c.log_acre_lot total_schools std_avg_student_teacher_ratio log_
+> total_free_lunch std_medianincome std_costofliving zip_code 
+
+      Source |       SS           df       MS      Number of obs   =    43,394
+-------------+----------------------------------   F(11, 43382)    =  15053.41
+       Model |  30447.6752        11  2767.97047   Prob > F        =    0.0000
+    Residual |   7976.9346    43,382  .183876598   R-squared       =    0.7924
+-------------+----------------------------------   Adj R-squared   =    0.7923
+       Total |  38424.6098    43,393  .885502496   Root MSE        =    .42881
+
+-------------------------------------------------------------------------------------------------
+                      log_price | Coefficient  Std. err.      t    P>|t|     [95% conf. interval]
+--------------------------------+----------------------------------------------------------------
+                            bed |  -.0600949   .0020609   -29.16   0.000    -.0641342   -.0560555
+                           bath |   .2081689   .0026477    78.62   0.000     .2029795    .2133584
+                 log_house_size |   .5045175   .0080279    62.85   0.000     .4887828    .5202523
+                   log_acre_lot |  -.1723146   .0210304    -8.19   0.000    -.2135345   -.1310948
+                                |
+c.log_house_size#c.log_acre_lot |   .0319939   .0027944    11.45   0.000     .0265168     .037471
+                                |
+                  total_schools |   .0212167   .0006684    31.74   0.000     .0199065    .0225269
+  std_avg_student_teacher_ratio |  -.0228519   .0022548   -10.13   0.000    -.0272714   -.0184325
+           log_total_free_lunch |  -.0716402    .002816   -25.44   0.000    -.0771596   -.0661209
+               std_medianincome |  -.2338496   .0032606   -71.72   0.000    -.2402404   -.2274589
+               std_costofliving |   .7160851   .0048301   148.25   0.000      .706618    .7255523
+                       zip_code |  -.0000602   2.72e-06   -22.12   0.000    -.0000655   -.0000549
+                          _cons |   9.921212   .0677054   146.54   0.000     9.788508    10.05392
+-------------------------------------------------------------------------------------------------
+
+. est store model7
+
+. 
+. esttab model1 model2 model3 model4 model5 model6 model7 using regression_table.tex, replace ///
+> label b(3) se stats(r2 N) compress
+(file regression_table.tex not found)
+(output written to regression_table.tex)
+
+. 
+. * Close the log file
+. log close
+      name:  <unnamed>
+       log:  /Users/cristinasulam/Desktop/Replication_Package/NY_Housing_Analysis.log
+  log type:  text
+ closed on:   5 Dec 2024, 21:47:55
+--------------------------------------------------------------------------------------------------------------
